@@ -8,7 +8,7 @@
 5. 무대 배경 설정
 6. App.jsx에 넣고 실행
 
-결과
+결과(영상)
 https://github.com/lemon3724/ANU/blob/main/App.jsx%20-%20grapics%20-%20Visual%20Studio%20Code.mp4
 
 소감
