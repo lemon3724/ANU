@@ -14,3 +14,7 @@
 소감
 
 1번, 2번, 3번 과정에서 정말 순조롭게 진행되어 빠르게 끝날 줄 알았지만, 정작 캐릭터 파일을 .fbx에서 .glb로 변경하는 과정이 정말 오래걸려 힘들었다. 그럼에도 불구하고 어려웠던 과정을 넘기면서 정말 뿌듯했고, 예상치 못한 결과가 오히려 더 좋은 결과가 나오는 등의 행운이 겹치면서 과제를 성공적으로 마무리했다.
+
+모델링 출처
+https://www.deviantart.com/higuys920/art/Danganronpa-Chihiro-Fujisaki-XPS-FBX-MMD-914156126
+https://sandman13sq.gumroad.com/l/chiaki
