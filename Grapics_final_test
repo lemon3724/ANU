@@ -1,0 +1,113 @@
+//Three.js를 활용하여 회전하는 삼각형 만들기
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>Three.js 회전하는 삼각형</title>
+    <style> body { margin: 0; overflow: hidden; } </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+<script>
+    // 1. Scene, Camera, Renderer 설정
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // 2. 삼각형 Geometry 생성 (BufferGeometry)
+    const geometry = new THREE.BufferGeometry();
+    const vertices = new Float32Array([
+         0.0,  1.0, 0.0,  // 꼭짓점 1 (위)
+        -1.0, -1.0, 0.0,  // 꼭짓점 2 (아래 왼쪽)
+         1.0, -1.0, 0.0   // 꼭짓점 3 (아래 오른쪽)
+    ]);
+    geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+
+    // 3. Material 및 Mesh 생성 (단면만 보이지 않게 DoubleSide 설정)
+    const material = new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide });
+    const triangle = new THREE.Mesh(geometry, material);
+    scene.add(triangle);
+
+    camera.position.z = 5;
+
+    // 4. 애니메이션 루프 (회전)
+    function animate() {
+        requestAnimationFrame(animate);
+        
+        // Y축과 Z축을 기준으로 회전
+        triangle.rotation.y += 0.01;
+        triangle.rotation.z += 0.01;
+
+        renderer.render(scene, camera);
+    }
+    animate();
+
+    // 창 크기 조절 대응
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+</script>
+</body>
+</html>
+
+
+
+//r3f를 활용하여 회전하는 삼각형 만들기
+import React, { useRef } from 'react';
+import { Canvas, useFrame } from '@react-three/fiber';
+import * as THREE from 'three';
+
+// ★ 핵심 수정: 최신 Three.js의 WebGPU 렌더러 표준 임포트 경로입니다.
+import WebGPURenderer from 'three/src/renderers/webgpu/WebGPURenderer.js';
+
+function WebGPUMesh() {
+  const meshRef = useRef();
+
+  useFrame((state, delta) => {
+    if (meshRef.current) {
+      meshRef.current.rotation.y += delta;
+      meshRef.current.rotation.z += delta * 0.5;
+    }
+  });
+
+  return (
+    <mesh ref={meshRef}>
+      <ambientLight intensity={1.5} />
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          args={[new Float32Array([
+             0.0,  1.0, 0.0,
+            -1.0, -1.0, 0.0,
+             1.0, -1.0, 0.0
+          ]), 3]}
+        />
+      </bufferGeometry>
+      <meshBasicMaterial color="orange" side={THREE.DoubleSide} />
+    </mesh>
+  );
+}
+
+export default function App() {
+  return (
+    <div style={{ width: '100vw', height: '100vh', background: '#111' }}>
+      {/* gl 프롭스에 인스턴스를 직접 만드는 대신, 문자열이나 기본 옵션만 주거나 
+          R3F 버전에 따라 아예 gl 설정을 비워두면 WebGL2/WebGPU 하이브리드로 작동합니다. */}
+      <Canvas camera={{ position: [0, 0, 3] }}>
+        <WebGPUMesh />
+      </Canvas>
+    </div>
+  );
+}
+
+
+
+//OpenGL를 활용하여 회전하는 삼각형 만들기
+
+
+
+//DirectX를 활용하여 회전하는 삼각형 만들기
