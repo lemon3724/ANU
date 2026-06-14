@@ -107,7 +107,201 @@ export default function App() {
 
 
 //OpenGL를 활용하여 회전하는 삼각형 만들기
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
+#include <cmath>
+
+// 버텍스 셰이더 (회전 행렬을 적용)
+const char* vertexShaderSource = R"(
+    #version 330 core
+    layout (location = 0) in vec3 aPos;
+    uniform mat4 transform;
+    void main() {
+        gl_Position = transform * vec4(aPos, 1.0);
+    }
+)";
+
+// 프래그먼트 셰이더 (색상 지정)
+const char* fragmentShaderSource = R"(
+    #version 330 core
+    out vec4 FragColor;
+    void main() {
+        FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f); // 주황색
+    }
+)";
+
+int main() {
+    // 1. GLFW 초기화
+    if (!glfwInit()) return -1;
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+
+    GLFWwindow* window = glfwCreateWindow(800, 600, "OpenGL Rotating Triangle", NULL, NULL);
+    if (!window) { glfwTerminate(); return -1; }
+    glfwMakeContextCurrent(window);
+
+    // 2. GLEW 초기화
+    glewInit();
+
+    // 3. 셰이더 컴파일 및 링크
+    unsigned int vertexShader = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
+    glCompileShader(vertexShader);
+
+    unsigned int fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
+    glCompileShader(fragmentShader);
+
+    unsigned int shaderProgram = glCreateProgram();
+    glAttachShader(shaderProgram, vertexShader);
+    glAttachShader(shaderProgram, fragmentShader);
+    glLinkProgram(shaderProgram);
+    glDeleteShader(vertexShader);
+    glDeleteShader(fragmentShader);
+
+    // 4. 데이터 정의 (삼각형 꼭짓점)
+    float vertices[] = {
+         0.0f,  0.5f, 0.0f,
+        -0.5f, -0.5f, 0.0f,
+         0.5f, -0.5f, 0.0f
+    };
+
+    unsigned int VBO, VAO;
+    glGenVertexArrays(1, &VAO);
+    glGenBuffers(1, &VBO);
+
+    glBindVertexArray(VAO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    // 5. 렌더링 루프
+    while (!glfwWindowShouldClose(window)) {
+        glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(shaderProgram);
+
+        // 시간 데이터에 기반한 회전 행렬 계산 (Z축 회전)
+        float time = (float)glfwGetTime();
+        float cosT = cos(time);
+        float sinT = sin(time);
+        
+        // 행 우선(Row-major) 구조로 매트릭스 구성 (OpenGL은 열 우선이므로 통신 시 transpose 인자 조절)
+        float transform[] = {
+             cosT,  sinT, 0.0f, 0.0f,
+            -sinT,  cosT, 0.0f, 0.0f,
+             0.0f,  0.0f, 1.0f, 0.0f,
+             0.0f,  0.0f, 0.0f, 1.0f
+        };
+
+        int transformLoc = glGetUniformLocation(shaderProgram, "transform");
+        glUniformMatrix4fv(transformLoc, 1, GL_FALSE, transform);
+
+        glBindVertexArray(VAO);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        glfwSwapBuffers(window);
+        glfwPollEvents();
+    }
+
+    glDeleteVertexArrays(1, &VAO);
+    glDeleteBuffers(1, &VBO);
+    glDeleteProgram(shaderProgram);
+    glfwTerminate();
+    return 0;
+}
 
 
 
 //DirectX를 활용하여 회전하는 삼각형 만들기
+//HLSL
+cbuffer ConstantBuffer : register(b0)
+{
+    matrix g_transform; 
+};
+
+struct VertexIn
+{
+    float3 position : POSITION;
+    float4 color    : COLOR;
+};
+
+struct VertexOut
+{
+    float4 position : SV_POSITION;
+    float4 color    : COLOR;
+};
+
+VertexOut VS(VertexIn vin)
+{
+    VertexOut vout;
+    // 회전 행렬을 정점에 곱해줍니다.
+    vout.position = mul(float4(vin.position, 1.0f), g_transform);
+    vout.color = vin.color;
+    return vout;
+}
+
+float4 PS(VertexOut pin) : SV_Target
+{
+    return pin.color;
+}
+
+
+//C++
+#include <d3d12.h>
+#include <dxgi1_6.h>
+#include <DirectXMath.h>
+
+using namespace DirectX;
+
+// 상수 버퍼 구조체 (16바이트 정렬 필수)
+struct ConstantBufferData
+{
+    XMMATRIX transform;
+};
+
+// 전역 변수 및 객체 가정
+ID3D12GraphicsCommandList* m_commandList;
+ID3D12DescriptorHeap* m_cbvHeap;
+ID3D12Resource* m_constantBuffer;
+ConstantBufferData         m_cbData;
+UINT8* m_pCbvDataBegin;
+float                      m_angle = 0.0f;
+
+// 1. 프레임 업데이트 시 호출 (회전각 계산 및 상수 버퍼 갱신)
+void Update()
+{
+    m_angle += 0.02f; // 회전 속도
+    
+    // Z축 기준 회전 행렬 생성
+    XMMATRIX rotation = XMMatrixRotationZ(m_angle);
+    
+    // DX12는 기본적으로 Row-Major 연산을 처리하므로 Transpose하여 셰이더로 복사
+    m_cbData.transform = XMMatrixTranspose(rotation);
+    
+    // Map-Unmap 방식을 통해 GPU 메모리에 업로드
+    memcpy(m_pCbvDataBegin, &m_cbData, sizeof(m_cbData));
+}
+
+// 2. 프레임 렌더링 시 호출 (Command 작성)
+void Render()
+{
+    // 커맨드 리스트 할당자 및 리스트 초기화 후 파이프라인 상태(PSO) 세팅 생략...
+    
+    // 셰이더에 전달할 상수 버퍼 힙 설정
+    ID3D12DescriptorHeap* heaps[] = { m_cbvHeap };
+    m_commandList->SetDescriptorHeaps(_countof(heaps), heaps);
+    
+    // 루트 시그니처 세팅 및 상수 버퍼 뷰(CBV) 바인딩
+    m_commandList->SetGraphicsRootDescriptorTable(0, m_cbvHeap->GetGPUDescriptorHandleForHeapStart());
+    
+    // 삼각형 그리기 명령어 기록
+    m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
+    m_commandList->DrawInstanced(3, 1, 0, 0);
+    
+    // 이후 커맨드 리스트 닫고 CommandQueue를 통해 ExecuteCommandLists 실행...
+}
