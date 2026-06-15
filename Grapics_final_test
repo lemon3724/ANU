@@ -217,91 +217,219 @@ int main() {
 
 
 //DirectX를 활용하여 회전하는 삼각형 만들기
-//HLSL
-cbuffer ConstantBuffer : register(b0)
-{
-    matrix g_transform; 
+#include <windows.h>
+#include <d3d11.h>
+#include <d3dcompiler.h>
+#include <directxmath.h>
+
+// 전역 변수들
+HWND                    g_hWnd = nullptr;
+ID3D11Device* g_pd3dDevice = nullptr;
+ID3D11DeviceContext* g_pImmediateContext = nullptr;
+IDXGISwapChain* g_pSwapChain = nullptr;
+ID3D11RenderTargetView* g_pRenderTargetView = nullptr;
+
+// 추가된 전역 변수 (삼각형 그리기에 필요)
+ID3D11VertexShader* g_pVertexShader = nullptr;
+ID3D11PixelShader* g_pPixelShader = nullptr;
+ID3D11InputLayout* g_pVertexLayout = nullptr;
+ID3D11Buffer* g_pVertexBuffer = nullptr;
+ID3D11Buffer* g_pConstantBuffer = nullptr;
+
+// 정점 구조체 정의
+struct SimpleVertex {
+    DirectX::XMFLOAT3 Pos;
 };
 
-struct VertexIn
-{
-    float3 position : POSITION;
-    float4 color    : COLOR;
+// 상수 버퍼 구조체 정의
+struct ConstantBuffer {
+    DirectX::XMMATRIX mTransform;
 };
 
-struct VertexOut
-{
-    float4 position : SV_POSITION;
-    float4 color    : COLOR;
-};
+// 인라인 HLSL 셰이더 코드 (정점 + 픽셀)
+const char* g_szShaders =
+"cbuffer ConstantBuffer : register(b0) {\n"
+"    matrix transform;\n"
+"};\n"
+"struct VS_OUTPUT {\n"
+"    float4 Pos : SV_POSITION;\n"
+"};\n"
+"VS_OUTPUT VS(float4 Pos : POSITION) {\n"
+"    VS_OUTPUT output = (VS_OUTPUT)0;\n"
+"    output.Pos = mul(Pos, transform);\n" // 행렬 곱셈
+"    return output;\n"
+"}\n"
+"float4 PS(VS_OUTPUT input) : SV_Target {\n"
+"    return float4(1.0f, 0.6f, 0.0f, 1.0f);\n" // 주황색 삼각형
+"}\n";
 
-VertexOut VS(VertexIn vin)
-{
-    VertexOut vout;
-    // 회전 행렬을 정점에 곱해줍니다.
-    vout.position = mul(float4(vin.position, 1.0f), g_transform);
-    vout.color = vin.color;
-    return vout;
+// 윈도우 메시지 처리 함수
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_DESTROY: PostQuitMessage(0); break;
+    default: return DefWindowProc(hWnd, message, wParam, lParam);
+    }
+    return 0;
 }
 
-float4 PS(VertexOut pin) : SV_Target
-{
-    return pin.color;
+// DirectX 11 장치, 파이프라인 및 리소스 초기화
+HRESULT InitDevice() {
+    RECT rc;
+    GetClientRect(g_hWnd, &rc);
+    UINT width = rc.right - rc.left;
+    UINT height = rc.bottom - rc.top;
+
+    DXGI_SWAP_CHAIN_DESC sd = {};
+    sd.BufferCount = 1;
+    sd.BufferDesc.Width = width;
+    sd.BufferDesc.Height = height;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    sd.OutputWindow = g_hWnd;
+    sd.SampleDesc.Count = 1;
+    sd.Windowed = TRUE;
+
+    D3D_FEATURE_LEVEL featureLevels[] = { D3D_FEATURE_LEVEL_11_0 };
+    D3D_FEATURE_LEVEL featureLevel;
+
+    HRESULT hr = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0,
+        featureLevels, 1, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pImmediateContext);
+
+    if (FAILED(hr)) return hr;
+
+    ID3D11Texture2D* pBackBuffer = nullptr;
+    g_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBackBuffer);
+    g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_pRenderTargetView);
+    pBackBuffer->Release();
+
+    g_pImmediateContext->OMSetRenderTargets(1, &g_pRenderTargetView, nullptr);
+
+    D3D11_VIEWPORT vp;
+    vp.Width = (FLOAT)width;
+    vp.Height = (FLOAT)height;
+    vp.MinDepth = 0.0f;
+    vp.MaxDepth = 1.0f;
+    vp.TopLeftX = 0;
+    vp.TopLeftY = 0;
+    g_pImmediateContext->RSSetViewports(1, &vp);
+
+    // -------------------------------------------------------------
+    // [추가된 영역] 셰이더 컴파일 및 리소스(정점 버퍼 등) 세팅
+    // -------------------------------------------------------------
+    ID3DBlob* pVSBlob = nullptr;
+    ID3DBlob* pErrorBlob = nullptr;
+
+    // 정점 셰이더 컴파일
+    hr = D3DCompile(g_szShaders, strlen(g_szShaders), nullptr, nullptr, nullptr, "VS", "vs_4_0", 0, 0, &pVSBlob, &pErrorBlob);
+    if (FAILED(hr)) return hr;
+    hr = g_pd3dDevice->CreateVertexShader(pVSBlob->GetBufferPointer(), pVSBlob->GetBufferSize(), nullptr, &g_pVertexShader);
+    if (FAILED(hr)) return hr;
+
+    // 입력 레이아웃 정의 (C++ 구조체와 셰이더의 Input 연결)
+    D3D11_INPUT_ELEMENT_DESC layout[] = {
+        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+    };
+    hr = g_pd3dDevice->CreateInputLayout(layout, 1, pVSBlob->GetBufferPointer(), pVSBlob->GetBufferSize(), &g_pVertexLayout);
+    pVSBlob->Release();
+    if (FAILED(hr)) return hr;
+
+    // 픽셀 셰이더 컴파일
+    ID3DBlob* pPSBlob = nullptr;
+    hr = D3DCompile(g_szShaders, strlen(g_szShaders), nullptr, nullptr, nullptr, "PS", "ps_4_0", 0, 0, &pPSBlob, &pErrorBlob);
+    if (FAILED(hr)) return hr;
+    hr = g_pd3dDevice->CreatePixelShader(pPSBlob->GetBufferPointer(), pPSBlob->GetBufferSize(), nullptr, &g_pPixelShader);
+    pPSBlob->Release();
+    if (FAILED(hr)) return hr;
+
+    // 정점 데이터 정의 (시계 방향 순서로 배치하여 컬링 방지)
+    SimpleVertex vertices[] = {
+        { DirectX::XMFLOAT3(0.0f,  0.5f, 0.0f) }, // 위
+        { DirectX::XMFLOAT3(0.5f, -0.5f, 0.0f) }, // 오른쪽 아래
+        { DirectX::XMFLOAT3(-0.5f, -0.5f, 0.0f) }  // 왼쪽 아래
+    };
+
+    D3D11_BUFFER_DESC bd = {};
+    bd.Usage = D3D11_USAGE_DEFAULT;
+    bd.ByteWidth = sizeof(SimpleVertex) * 3;
+    bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+
+    D3D11_SUBRESOURCE_DATA InitData = {};
+    InitData.pSysMem = vertices;
+    hr = g_pd3dDevice->CreateBuffer(&bd, &InitData, &g_pVertexBuffer);
+    if (FAILED(hr)) return hr;
+
+    // 상수 버퍼 생성 (회전 행렬을 매 프레임 전달하기 위한 용도)
+    bd.Usage = D3D11_USAGE_DEFAULT;
+    bd.ByteWidth = sizeof(ConstantBuffer);
+    bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    hr = g_pd3dDevice->CreateBuffer(&bd, nullptr, &g_pConstantBuffer);
+    if (FAILED(hr)) return hr;
+
+    return S_OK;
 }
 
-
-//C++
-#include <d3d12.h>
-#include <dxgi1_6.h>
-#include <DirectXMath.h>
-
-using namespace DirectX;
-
-// 상수 버퍼 구조체 (16바이트 정렬 필수)
-struct ConstantBufferData
-{
-    XMMATRIX transform;
-};
-
-// 전역 변수 및 객체 가정
-ID3D12GraphicsCommandList* m_commandList;
-ID3D12DescriptorHeap* m_cbvHeap;
-ID3D12Resource* m_constantBuffer;
-ConstantBufferData         m_cbData;
-UINT8* m_pCbvDataBegin;
-float                      m_angle = 0.0f;
-
-// 1. 프레임 업데이트 시 호출 (회전각 계산 및 상수 버퍼 갱신)
-void Update()
-{
-    m_angle += 0.02f; // 회전 속도
-    
-    // Z축 기준 회전 행렬 생성
-    XMMATRIX rotation = XMMatrixRotationZ(m_angle);
-    
-    // DX12는 기본적으로 Row-Major 연산을 처리하므로 Transpose하여 셰이더로 복사
-    m_cbData.transform = XMMatrixTranspose(rotation);
-    
-    // Map-Unmap 방식을 통해 GPU 메모리에 업로드
-    memcpy(m_pCbvDataBegin, &m_cbData, sizeof(m_cbData));
+// 자원 해제(CleanUp) 함수
+void CleanupDevice() {
+    if (g_pConstantBuffer) g_pConstantBuffer->Release();
+    if (g_pVertexBuffer) g_pVertexBuffer->Release();
+    if (g_pVertexLayout) g_pVertexLayout->Release();
+    if (g_pVertexShader) g_pVertexShader->Release();
+    if (g_pPixelShader) g_pPixelShader->Release();
+    if (g_pRenderTargetView) g_pRenderTargetView->Release();
+    if (g_pSwapChain) g_pSwapChain->Release();
+    if (g_pImmediateContext) g_pImmediateContext->Release();
+    if (g_pd3dDevice) g_pd3dDevice->Release();
 }
 
-// 2. 프레임 렌더링 시 호출 (Command 작성)
-void Render()
-{
-    // 커맨드 리스트 할당자 및 리스트 초기화 후 파이프라인 상태(PSO) 세팅 생략...
-    
-    // 셰이더에 전달할 상수 버퍼 힙 설정
-    ID3D12DescriptorHeap* heaps[] = { m_cbvHeap };
-    m_commandList->SetDescriptorHeaps(_countof(heaps), heaps);
-    
-    // 루트 시그니처 세팅 및 상수 버퍼 뷰(CBV) 바인딩
-    m_commandList->SetGraphicsRootDescriptorTable(0, m_cbvHeap->GetGPUDescriptorHandleForHeapStart());
-    
-    // 삼각형 그리기 명령어 기록
-    m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
-    m_commandList->DrawInstanced(3, 1, 0, 0);
-    
-    // 이후 커맨드 리스트 닫고 CommandQueue를 통해 ExecuteCommandLists 실행...
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow) {
+    WNDCLASSEX wcex = { sizeof(WNDCLASSEX), CS_HREDRAW | CS_VREDRAW, WndProc, 0, 0, hInstance, nullptr, nullptr, nullptr, nullptr, L"DX11Window", nullptr };
+    RegisterClassEx(&wcex);
+    g_hWnd = CreateWindow(L"DX11Window", L"DirectX 11 Rotating Triangle", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, nullptr, nullptr, hInstance, nullptr);
+    ShowWindow(g_hWnd, nCmdShow);
+
+    if (FAILED(InitDevice())) return 0;
+
+    // 메시지 루프 및 렌더링 루프
+    MSG msg = { 0 };
+    static float time = 0.0f;
+
+    while (WM_QUIT != msg.message) {
+        if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+        else {
+            // 시간 업데이트를 통한 회전 각도 조절
+            time += 0.0005f;
+
+            // 1. 화면 클리어 (남색 배경)
+            float ClearColor[4] = { 0.0f, 0.125f, 0.3f, 1.0f };
+            g_pImmediateContext->ClearRenderTargetView(g_pRenderTargetView, ClearColor);
+
+            // 2. Z축 기준 회전 행렬 생성 후 Transpose(전치)하여 상수 버퍼 업데이트
+            DirectX::XMMATRIX world = DirectX::XMMatrixRotationZ(time);
+            ConstantBuffer cb;
+            cb.mTransform = DirectX::XMMatrixTranspose(world);
+            g_pImmediateContext->UpdateSubresource(g_pConstantBuffer, 0, nullptr, &cb, 0, 0);
+
+            // 3. 파이프라인에 사용할 리소스 바인딩
+            UINT stride = sizeof(SimpleVertex);
+            UINT offset = 0;
+            g_pImmediateContext->IASetVertexBuffers(0, 1, &g_pVertexBuffer, &stride, &offset);
+            g_pImmediateContext->IASetInputLayout(g_pVertexLayout);
+            g_pImmediateContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+            g_pImmediateContext->VSSetShader(g_pVertexShader, nullptr, 0);
+            g_pImmediateContext->VSSetConstantBuffers(0, 1, &g_pConstantBuffer); // VS 상수버퍼 연결
+            g_pImmediateContext->PSSetShader(g_pPixelShader, nullptr, 0);
+
+            // 4. 실제로 그리기 명령어 호출
+            g_pImmediateContext->Draw(3, 0);
+
+            g_pSwapChain->Present(0, 0);
+        }
+    }
+
+    CleanupDevice();
+    return (int)msg.wParam;
 }
